@@ -1,4 +1,4 @@
-;; BlockIQ Core Market Contract - Phase 1
+;; BlockIQ Core Market Contract - Phase 2
 ;; Initial commit: Basic prediction market functionality
 
 ;; =====================================
@@ -200,3 +200,90 @@
     (ok true))
 )
 
+;; Resolve market (Oracle only)
+(define-public (resolve-market (market-id uint) (outcome bool))
+    (let (
+        (market-data (unwrap! (get-market market-id) ERR-MARKET-NOT-FOUND))
+        (current-time (unwrap-panic (get-block-info? time (- block-height u1))))
+    )
+    
+    ;; Only oracle can resolve
+    (asserts! (is-eq tx-sender (var-get oracle-address)) ERR-NOT-AUTHORIZED)
+    
+    ;; Market must exist and not be resolved
+    (asserts! (not (get resolved market-data)) ERR-MARKET-RESOLVED)
+    
+    ;; Must be past resolution time
+    (asserts! (>= current-time (get resolution-time market-data)) ERR-MARKET-CLOSED)
+    
+    ;; Update market with resolution
+    (map-set markets market-id 
+        (merge market-data {
+            resolved: true,
+            outcome: (some outcome)
+        }))
+    
+    ;; Deactivate market
+    (map-set market-status market-id 
+        (merge (unwrap-panic (map-get? market-status market-id)) 
+               {is-active: false, resolution-submitted: true}))
+    
+    (ok true))
+)
+
+;; Claim winnings
+(define-public (claim-winnings (market-id uint))
+    (let (
+        (market-data (unwrap! (get-market market-id) ERR-MARKET-NOT-FOUND))
+        (user-stake (unwrap! (get-user-stake market-id tx-sender) ERR-INSUFFICIENT-FUNDS))
+        (market-outcome (unwrap! (get outcome market-data) ERR-MARKET-NOT-RESOLVED))
+    )
+    
+    ;; Market must be resolved
+    (asserts! (get resolved market-data) ERR-MARKET-NOT-RESOLVED)
+    
+    ;; User must not have claimed already
+    (asserts! (not (get claimed user-stake)) ERR-NOT-AUTHORIZED)
+    
+    ;; Calculate winnings
+    (let (
+        (winning-stake (if market-outcome (get stake-yes user-stake) (get stake-no user-stake)))
+        (total-winning-stakes (if market-outcome (get total-stake-yes market-data) (get total-stake-no market-data)))
+        (total-pool (+ (get total-stake-yes market-data) (get total-stake-no market-data)))
+        (payout (if (> total-winning-stakes u0) (/ (* winning-stake total-pool) total-winning-stakes) u0))
+    )
+    
+    ;; User must have winning stake
+    (asserts! (> winning-stake u0) ERR-INSUFFICIENT-FUNDS)
+    
+    ;; Mark as claimed
+    (map-set user-stakes {market-id: market-id, user: tx-sender}
+        (merge user-stake {claimed: true}))
+    
+    ;; Transfer winnings
+    (try! (as-contract (stx-transfer? payout tx-sender tx-sender)))
+    
+    (ok payout)))
+)
+
+;; =====================================
+;; ADMIN FUNCTIONS
+;; =====================================
+
+;; Set oracle address (Owner only)
+(define-public (set-oracle (new-oracle principal))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (var-set oracle-address new-oracle)
+        (ok true))
+)
+
+;; Emergency close market (Owner only)
+(define-public (emergency-close-market (market-id uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (map-set market-status market-id 
+            (merge (unwrap! (map-get? market-status market-id) ERR-MARKET-NOT-FOUND) 
+                   {is-active: false}))
+        (ok true))
+)
