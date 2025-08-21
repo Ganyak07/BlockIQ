@@ -3,7 +3,6 @@
 **BlockIQ** is a decentralized prediction market protocol built on Stacks blockchain, allowing users to create and stake on future outcomes with oracle-based resolution.
 
 ## 3-Phase Development Strategy
-
 ### Phase 1: Initial Commit - Core Foundation
 **Branch: `main` (Initial Release v1.0)**
 
